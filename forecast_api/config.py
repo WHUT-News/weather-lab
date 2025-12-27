@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     CORS_ALLOW_METHODS: list[str] = ["GET", "OPTIONS"]
     CORS_ALLOW_HEADERS: list[str] = ["*"]
 
-    # Cloud SQL Configuration (inherited from MCP)
-    GCP_PROJECT_ID: str
-    CLOUD_SQL_REGION: str = "us-central1"
+    # Cloud SQL Configuration
+    GOOGLE_CLOUD_PROJECT: str
+    GOOGLE_CLOUD_LOCATION: str = "us-central1"
     CLOUD_SQL_INSTANCE: str = "weather-forecasts"
     CLOUD_SQL_DB: str = "weather"
     CLOUD_SQL_USER: str = "postgres"

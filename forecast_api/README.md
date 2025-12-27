@@ -158,7 +158,7 @@ gcloud run deploy weather-forecast-api \
   --source . \
   --platform managed \
   --region us-central1 \
-  --set-env-vars GCP_PROJECT_ID=your-project-id \
+  --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id \
   --set-env-vars CLOUD_SQL_PASSWORD=your-password \
   --allow-unauthenticated
 ```
@@ -168,14 +168,14 @@ gcloud run deploy weather-forecast-api \
 All configuration is managed via environment variables. See [.env.example](.env.example) for available options.
 
 **Required Variables:**
-- `GCP_PROJECT_ID`: Google Cloud project ID
+- `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID
 - `CLOUD_SQL_PASSWORD`: Database password
 
 **Optional Variables:**
 - `API_TITLE`: API title (default: "Weather Forecast API")
 - `HOST`: Server host (default: "0.0.0.0")
 - `PORT`: Server port (default: 8000)
-- `CLOUD_SQL_REGION`: GCP region (default: "us-central1")
+- `GOOGLE_CLOUD_LOCATION`: GCP region (default: "us-central1")
 - `CLOUD_SQL_INSTANCE`: Instance name (default: "weather-forecasts")
 - `CLOUD_SQL_DB`: Database name (default: "weather")
 - `CLOUD_SQL_USER`: Database user (default: "postgres")
@@ -238,10 +238,11 @@ forecast_api/
 
 ## Dependencies
 
-The API reuses database connection code from the existing `forecast_storage_mcp` module:
-- `forecast_storage_mcp/tools/connection.py` - Cloud SQL connector
-- `forecast_storage_mcp/tools/forecast_operations.py` - Database operations
-- `forecast_storage_mcp/tools/encoding.py` - Text encoding utilities
+The API includes standalone database modules in the `core` package:
+
+- `core/connection.py` - Cloud SQL connector
+- `core/forecast_operations.py` - Database operations
+- `core/encoding.py` - Text encoding utilities
 
 ## Development
 

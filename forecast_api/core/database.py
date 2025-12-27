@@ -1,21 +1,14 @@
 """
 Database connection wrapper for FastAPI.
-Reuses existing connection code from forecast_storage_mcp.
+Provides database operations using standalone modules.
 """
-import sys
-from pathlib import Path
-
-# Add parent directory to path to import forecast_storage_mcp
-parent_dir = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(parent_dir))
-
-from forecast_storage_mcp.tools.connection import (
+from .connection import (
     get_connection,
     close_connector,
     test_connection
 )
-from forecast_storage_mcp.tools.encoding import decode_text
-from forecast_storage_mcp.tools.forecast_operations import (
+from .encoding import decode_text
+from .forecast_operations import (
     get_cached_forecast,
     list_forecasts,
     get_storage_stats

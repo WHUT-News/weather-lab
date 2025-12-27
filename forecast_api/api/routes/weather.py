@@ -3,6 +3,7 @@ Weather forecast endpoints.
 """
 from fastapi import APIRouter, Query, Path
 from typing import Optional
+import asyncio
 
 from api.models.responses import (
     WeatherResponse,
@@ -13,8 +14,64 @@ from api.models.responses import (
 from core.database import get_cached_forecast, list_forecasts
 from core.exceptions import ForecastNotFoundError, DatabaseConnectionError
 from datetime import datetime
+import vertexai
+from vertexai import agent_engines
+from config import settings
+
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+def trigger_forecast_preparation(city: str, language: Optional[str] = None):
+    """
+    Trigger async forecast preparation using Vertex AI agent engine.
+
+    Args:
+        city: City name to prepare forecast for
+        language: Optional language code for the forecast
+    """
+    if not settings.AGENT_ENGINE_ID:
+        return
+
+    vertexai.init(
+        project=settings.GOOGLE_CLOUD_PROJECT, 
+        location=settings.GOOGLE_CLOUD_LOCATION
+    )
+
+    try:
+        # Get the deployed agent engine
+        agent = agent_engines.get(settings.AGENT_ENGINE_ID)
+
+        # Create prompt for forecast generation
+        language_spec = f" in {language}" if language else ""
+        prompt = f"What is the current weather condition in the city of {city} {language_spec}"
+
+        # Use stream_query since the agent supports 'stream' mode
+        session_id = f"user_request_{city}_{language or 'default'}"
+
+        # Collect the streamed response
+        response_chunks = []
+        for chunk in agent.stream_query(
+            input=prompt,
+            config={"configurable": {"session_id": session_id}}
+        ):
+            response_chunks.append(chunk)
+            logger.debug(f"Received chunk: {chunk}")
+
+        # Log the complete result
+        logger.info(f"Forecast generated for {city}: {response_chunks}")
+    except Exception as agent_error:
+        # Log agent error but don't fail the request
+        logger.warning(f"Failed to trigger forecast for {city}: {str(agent_error)}")
+        import traceback
+        logger.warning(f"Traceback: {traceback.format_exc()}")
 
 
 @router.get(
@@ -59,12 +116,18 @@ async def get_latest_forecast(
                 }
             }
         }
-    except (ForecastNotFoundError, DatabaseConnectionError):
+    except ForecastNotFoundError as e:
+        # Trigger async forecast preparation when forecast not found (non-blocking)
+        logger.warning(f"triggering forecast preparation for {city}: {str(e)}")
+        trigger_forecast_preparation(city, language)
+
+        # Still raise the original error
+        raise
+    except DatabaseConnectionError:
         raise
     except Exception as e:
         # Log unexpected errors but don't mask their type
-        import logging
-        logging.error(f"Unexpected error in get_latest_forecast: {str(e)}", exc_info=True)
+        logger.error(f"Unexpected error in get_latest_forecast: {str(e)}", exc_info=True)
         raise
 
 
