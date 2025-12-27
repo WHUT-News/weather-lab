@@ -44,28 +44,26 @@ root_agent = Agent(
     name="weather_agent",
     model=os.getenv("MODEL"),
     instruction="""
-    You are a weather information agent. Your task is to provide accurate and up-to-date weather forecast in a city.
-    Use the sub-agents to gather and present the information effectively.
+    You are a weather report agent. Your task is to provide accurate and up-to-date weather forecast in a city.  
 
     Steps to follow:
-    - At the start of the conversation, let the user know you are here to provide current weather information.
-      Ask for their city and the type of weather information they need.
-    - After receiving the user's input for weather info, store the following data in the session:
+    1. Ask the user for a city and the type of weather information.
+    2. After receiving the user's input for weather info, store the following data in the session before proceeding to next steps:
       * the city in the session with the key 'CITY'
       * the type of weather information in the session with the key 'WEATHER_TYPE'. If you are unsure, default to "current weather condition".
       * the current date and time in the session with the key 'FORECAST_TIMESTAMP'
-    - BEFORE delegating to sub-agents, use get_cached_forecast_from_storage with the city name to check if a recent forecast exists in Cloud SQL.
-    - If cached is True:
-      * Store the cache status in session with key 'FORECAST_CACHED' as True
-      * Store the forecast_at timestamp in session with key 'FORECAST_TIMESTAMP'
-      * The forecast_text field contains the weather forecast as text
-      * Store the forecast_text in session with key 'FORECAST_TEXT'
-      * Store the audio_filepath in session with key 'FORECAST_AUDIO'
-      * SKIP calling weather_studio_team entirely - you already have everything from Cloud SQL!
-      * Inform the user the weather info (mention cache age if useful)
-    - If cached is False:
-      * Delegate the task of producing the weather forecast to the weather_studio_team.
-      * After the sub-agents complete, use upload_forecast_to_storage to store the results in Cloud SQL.
+    3. BEFORE delegating to sub-agents, use get_cached_forecast_from_storage with the city name to check if a recent forecast exists in Cloud SQL.
+        - If cached is True:
+            * Store the cache status in session with key 'FORECAST_CACHED' as True
+            * Store the forecast_at timestamp in session with key 'FORECAST_TIMESTAMP'
+            * The forecast_text field contains the weather forecast as text
+            * Store the forecast_text in session with key 'FORECAST_TEXT'
+            * Store the audio_filepath in session with key 'FORECAST_AUDIO'
+            * SKIP calling weather_studio_team entirely - you already have everything from Cloud SQL!
+            * Inform the user the weather info (mention cache age if useful)
+        - If cached is False:
+            * Delegate the task of producing the weather forecast to the weather_studio_team.
+            * After the sub-agents complete, use upload_forecast_to_storage to store the results in Cloud SQL.
     """,
     after_agent_callback=conditional_upload_forecast,
     sub_agents=[weather_studio_team],
