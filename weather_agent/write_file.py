@@ -8,7 +8,7 @@ from google.genai import types
 from google.adk.tools import ToolContext
 import wave
 
-from weather_agent.tools import get_current_timestamp
+from .tools import get_current_timestamp
 
 load_dotenv()
 

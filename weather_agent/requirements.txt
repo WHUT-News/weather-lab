@@ -1,6 +1,6 @@
+google-adk
 google-cloud-aiplatform[adk,agent_engines]
 requests
 python-dotenv
-httpx>=0.26.0
-# chainlit
-streamlit
+httpx
+mcp
