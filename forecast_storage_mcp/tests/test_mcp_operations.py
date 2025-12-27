@@ -9,10 +9,14 @@ Usage:
 """
 
 import os
+import sys
 import tempfile
 import wave
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+
+# Add parent directory to path to import tools
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Load environment variables
 load_dotenv()

@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     API_DESCRIPTION: str = "REST API for weather forecast retrieval"
 
     # Server Configuration
-    HOST: str = "0.0.0.0"
     PORT: int = 8000
     RELOAD: bool = False
 
@@ -31,8 +30,8 @@ class Settings(BaseSettings):
     CLOUD_SQL_USER: str = "postgres"
     CLOUD_SQL_PASSWORD: str
 
-    # Rate Limiting
-    RATE_LIMIT_ENABLED: bool = False
+    # Agent Engine Configuration
+    AGENT_ENGINE_ID: Optional[str] = None
 
     # Logging
     LOG_LEVEL: str = "INFO"

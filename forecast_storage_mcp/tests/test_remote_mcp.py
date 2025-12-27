@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from weather_agent.forecast_storage_client import _call_mcp_tool_remote
 
@@ -356,7 +356,7 @@ async def async_main(mode: str):
     try:
         if mode in ["local", "all"]:
             # Test localhost HTTP
-            port = int(os.environ.get("TEST_MCP_PORT", "8080"))
+            port = int(os.environ.get("TEST_MCP_PORT", "8100"))
             os.environ["MCP_SERVER_URL"] = f"http://localhost:{port}"
             results["Local HTTP (localhost)"] = await test_local_http(port)
         
