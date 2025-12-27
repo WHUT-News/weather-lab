@@ -62,7 +62,10 @@ async def get_latest_forecast(
     except (ForecastNotFoundError, DatabaseConnectionError):
         raise
     except Exception as e:
-        raise DatabaseConnectionError(f"Unexpected error: {str(e)}")
+        # Log unexpected errors but don't mask their type
+        import logging
+        logging.error(f"Unexpected error in get_latest_forecast: {str(e)}", exc_info=True)
+        raise
 
 
 @router.get(
