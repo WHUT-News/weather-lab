@@ -1,7 +1,4 @@
 # ADK local files
-.adk/
-**/.adk/
-*.db
 **/*.db
 
 # Python cache files
@@ -48,7 +45,6 @@ tests/
 *~
 
 # Environment
-.env
 .venv
 env/
 venv/
