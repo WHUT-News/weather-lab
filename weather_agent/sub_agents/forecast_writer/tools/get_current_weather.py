@@ -30,6 +30,11 @@ def _format_weather_data(weather_data: Dict[str, Any], units: str = "imperial") 
         description = weather_data['weather'][0]['description']
         wind_speed = weather_data['wind']['speed']
 
+        # format the values appropriately for the units
+        temp = round(temp)
+        feels_like = round(feels_like)
+        wind_speed = round(wind_speed)
+
         temp_unit = "°F" if units == "imperial" else "°C"
         wind_unit = "mph" if units == "imperial" else "m/s"
 

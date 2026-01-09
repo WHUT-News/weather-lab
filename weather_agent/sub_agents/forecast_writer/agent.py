@@ -19,8 +19,11 @@ forecast_writer_agent = Agent(
         write a friendly and engaging weather forecast announcement. 
         The announcement should be:
         - Conversational and easy to understand
-        - About 3-4 sentences long
+        - About 4-5 sentences long
+        - Start with a greeting and mention the city name
+        - Describe the current weather conditions (including temperature, humidity, wind speed, etc.)
         - Include practical advice (e.g., "bring an umbrella", "dress warmly")
+        - end with 'Brought to you by W-H-U-T Weather Services.'
         - Suitable for text-to-speech conversion
 
         Steps to follow:
