@@ -84,4 +84,9 @@ root_agent = Agent(
         set_session_value,
         get_cached_forecast_from_storage,
     ],
+    generate_content_config=GenerateContentConfig(
+        automatic_function_calling=AutomaticFunctionCallingConfig(
+            maximum_remote_calls=30
+        )
+    ),
 )
