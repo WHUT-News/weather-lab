@@ -1,11 +1,13 @@
 import os
 import wave
 from dotenv import load_dotenv
-from google.adk.agents import Agent, SequentialAgent
+from google.adk.agents import Agent, SequentialAgent, ParallelAgent
 from google.adk.tools import ToolContext
+from google.genai.types import GenerateContentConfig, AutomaticFunctionCallingConfig
 
 from .sub_agents.forecast_writer.agent import forecast_writer_agent
 from .sub_agents.forecast_speaker.agent import forecast_speaker_agent
+from .sub_agents.forecast_photographer.agent import forecast_photographer_agent
 
 from .tools import set_session_value, get_current_timestamp
 
@@ -30,12 +32,21 @@ async def conditional_upload_forecast(callback_context):
     await upload_forecast_to_storage(callback_context)
 
 
+weather_media_team = ParallelAgent(
+    name="weather_media_team",
+    description="A team of agents that work together to produce weather forecast audio and picture.",
+    sub_agents=[
+        forecast_speaker_agent,
+        forecast_photographer_agent,
+    ],
+)
+
 weather_studio_team = SequentialAgent(
     name="weather_studio_team",
     description="A team of agents that work together to provide current weather information.",
     sub_agents=[
         forecast_writer_agent, 
-        forecast_speaker_agent
+        weather_media_team
     ],
 )
 
@@ -44,7 +55,7 @@ root_agent = Agent(
     name="weather_agent",
     model=os.getenv("MODEL"),
     instruction="""
-    You are a weather report agent. Your task is to provide accurate and up-to-date weather forecast in a city.  
+    You are a weather report agent. Your task is to provide accurate and up-to-date weather forecast in a city.
 
     Steps to follow:
     1. Ask the user for a city and the type of weather information.
@@ -59,8 +70,9 @@ root_agent = Agent(
             * The forecast_text field contains the weather forecast as text
             * Store the forecast_text in session with key 'FORECAST_TEXT'
             * Store the audio_filepath in session with key 'FORECAST_AUDIO'
-            * SKIP calling weather_studio_team entirely - you already have everything from Cloud SQL!
-            * Inform the user the weather info (mention cache age if useful)
+            * Store the picture_filepath in session with key 'FORECAST_PICTURE'
+            * SKIP calling weather_studio_team entirely - you already have everything!
+            * Inform the user the weather info (mention cache age in minutes, if useful)
         - If cached is False:
             * Delegate the task of producing the weather forecast to the weather_studio_team.
             * After the sub-agents complete, use upload_forecast_to_storage to store the results in Cloud SQL.
@@ -72,5 +84,4 @@ root_agent = Agent(
         set_session_value,
         get_cached_forecast_from_storage,
     ],
-
 )

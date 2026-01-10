@@ -1,6 +1,8 @@
 import os
 import time
 import base64
+from io import BytesIO
+from PIL import Image
 from dotenv import load_dotenv
 
 from google import genai
@@ -13,6 +15,41 @@ from .tools import get_current_timestamp
 load_dotenv()
 
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
+
+
+def write_picture_file(tool_context: ToolContext, city_name: str, image_data, format: str="png") -> dict[str, str]:
+    """
+    Write the forecast text stored in the session to a picture file.
+    Args:
+        tool_context: The tool context containing session state
+        city_name: The name of the city for which the forecast is being made
+        image_data: Image data bytes to write to file
+        format: The image format (default is "png")
+    Returns:
+        dict[str, str]: A dictionary containing the status and the file_path of the saved picture file.
+    """
+
+    # expand the current timestamp to the file name
+    forecast_timestamp = tool_context.state.get("FORECAST_TIMESTAMP", get_current_timestamp())
+    file_name = f"forecast_picture_{forecast_timestamp}.{format}"
+
+    # Save to local OUTPUT_DIR as temporary storage
+    # File will be uploaded to Cloud SQL by the weather agent
+    directory = os.path.join(OUTPUT_DIR, city_name)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    file_path = os.path.join(directory, file_name)
+    
+    # Open image bytes with Pillow
+    image = Image.open(BytesIO(image_data))
+    image.save(file_path)
+    
+    # Store picture file path in session state for agent to use in upload
+    tool_context.state["FORECAST_PICTURE"] = file_path
+
+    return {"status": "success", "file_path": file_path}
+
 
 # Set up the wave file to save the output:
 def _save_wave_file(file_path, pcm, channels=1, rate=24000, sample_width=2):
