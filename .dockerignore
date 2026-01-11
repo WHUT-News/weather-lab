@@ -19,6 +19,9 @@ ENV/
 *.swp
 *.swo
 
+# Vibe Coder
+.claude/
+
 # Testing
 .pytest_cache/
 .coverage

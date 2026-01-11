@@ -16,6 +16,12 @@ MAX_INSTANCES="${MAX_INSTANCES:-10}"
 MIN_INSTANCES="${MIN_INSTANCES:-0}"
 TIMEOUT="${TIMEOUT:-300}"
 
+# Required environment variables
+if [ -z "${MCP_SERVER_URL}" ]; then
+  echo "Error: MCP_SERVER_URL environment variable is required"
+  exit 1
+fi
+
 # Construct full image path
 IMAGE_PATH="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:${TAG}"
 
@@ -32,6 +38,8 @@ echo "CPU: ${CPU}"
 echo "Max Instances: ${MAX_INSTANCES}"
 echo "Min Instances: ${MIN_INSTANCES}"
 echo "Timeout: ${TIMEOUT}s"
+echo "MCP Server URL: ${MCP_SERVER_URL}"
+echo "Cache TTL: ${CACHE_TTL_SECONDS:-3600}s"
 echo "================================================"
 
 # Deploy to Cloud Run
@@ -46,7 +54,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances="${MAX_INSTANCES}" \
   --min-instances="${MIN_INSTANCES}" \
   --timeout="${TIMEOUT}" \
-  --allow-unauthenticated 
+  --set-env-vars="MCP_SERVER_URL=${MCP_SERVER_URL},CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-3600}" \
+  --allow-unauthenticated
 
 echo "================================================"
 echo "Deployment completed successfully!"

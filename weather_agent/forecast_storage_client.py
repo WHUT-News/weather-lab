@@ -27,6 +27,9 @@ from .caching.forecast_file_cleanup import cleanup_old_forecast_files_async
 # Example: http://localhost:8080 or https://forecast-mcp-server-xxxxx.run.app
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080")
 
+# Cache TTL in seconds (derived from CACHE_TTL_SECONDS, default 3600 seconds / 60 minutes)
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+
 
 async def _call_mcp_tool_remote(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -112,7 +115,7 @@ async def upload_forecast_to_storage(
     forecast_text = callback_context.state["FORECAST_TEXT"]
     audio_file_path = callback_context.state["FORECAST_AUDIO"]
     forecast_at = callback_context.state["FORECAST_TIMESTAMP"]
-    ttl_minutes = 30  # Default TTL in minutes
+    ttl_minutes = CACHE_TTL_SECONDS // 60  # Convert seconds to minutes
 
     # Read audio file and encode as base64 (MCP server may be remote and can't access local files)
     try:
@@ -123,10 +126,30 @@ async def upload_forecast_to_storage(
         logging.error(f"Failed to read audio file {audio_file_path}: {e}")
         return
 
+    # Read picture file if available and encode as base64
+    picture_file_path = callback_context.state.get("FORECAST_PICTURE")
+    picture_base64 = None
+    picture_format = "png"
+
+    if picture_file_path:
+        try:
+            with open(picture_file_path, 'rb') as f:
+                picture_bytes = f.read()
+                picture_base64 = base64.b64encode(picture_bytes).decode('utf-8')
+
+            # Extract format from file extension
+            _, ext = os.path.splitext(picture_file_path)
+            picture_format = ext.lstrip('.')  # Remove leading dot
+        except Exception as e:
+            logging.error(f"Failed to read picture file {picture_file_path}: {e}")
+            # Continue without picture - it's optional
+
     result = await _call_mcp_tool_remote("upload_forecast", {
         "city": city,
         "forecast_text": forecast_text,
         "audio_data": audio_base64,
+        "picture_data": picture_base64,
+        "picture_format": picture_format,
         "forecast_at": forecast_at,
         "ttl_minutes": ttl_minutes,
         "language": "en",  # Could be made configurable
@@ -156,6 +179,53 @@ async def upload_forecast_to_storage(
     asyncio.create_task(cleanup_old_forecast_files_async())
 
 
+async def download_and_write_picture(
+    tool_context: ToolContext,
+    city: str,
+    picture_url: str
+) -> str | None:
+    """
+    Download picture from GCS URL and write to local file.
+
+    Args:
+        tool_context: ADK tool context
+        city: City name
+        picture_url: GCS URL (gs://bucket/path/file.png)
+
+    Returns:
+        Local file path or None if download failed
+    """
+    try:
+        from google.cloud import storage
+
+        # Parse gs://bucket/path/file.png
+        if not picture_url.startswith("gs://"):
+            logging.error(f"Invalid GCS URL format: {picture_url}")
+            return None
+
+        parts = picture_url[5:].split("/", 1)
+        bucket_name = parts[0]
+        blob_name = parts[1]
+
+        # Download from GCS
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        picture_bytes = blob.download_as_bytes()
+
+        # Write locally using existing write_picture_file
+        _, ext = os.path.splitext(picture_url)
+        format = ext.lstrip('.') or 'png'
+
+        from .write_file import write_picture_file
+        result = write_picture_file(tool_context, city, picture_bytes, format)
+        return result.get("file_path")
+
+    except Exception as e:
+        logging.error(f"Failed to download picture from {picture_url}: {e}")
+        return None
+
+
 async def get_cached_forecast_from_storage(
     tool_context: ToolContext,
     city: str
@@ -181,10 +251,22 @@ async def get_cached_forecast_from_storage(
         # store audio_data into a file using write_audio_file tool
         audio_file = write_audio_file(tool_context, city, result.get("audio_data", ""))
 
+        # Download picture from GCS if available
+        picture_url = result.get("picture_url")
+        picture_filepath = None
+
+        if picture_url:
+            picture_filepath = await download_and_write_picture(
+                tool_context,
+                city,
+                picture_url
+            )
+
         return {
             "cached": True,
             "forecast_text": result.get("forecast_text", ""),
             "audio_filepath": audio_file.get("file_path", None),
+            "picture_filepath": picture_filepath,
             "age_seconds": result.get("age_seconds", 0),
             "forecast_at": result.get("forecast_at", ""),
             "expires_at": result.get("expires_at", ""),
@@ -195,6 +277,7 @@ async def get_cached_forecast_from_storage(
             "cached": False,
             "forecast_text": None,
             "audio_filepath": None,
+            "picture_filepath": None,
         }
 
 

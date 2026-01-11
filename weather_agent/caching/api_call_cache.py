@@ -6,9 +6,13 @@ This module provides:
 - cached_with_ttl: Decorator for caching function results with TTL
 """
 
+import os
 import time
 from functools import wraps
 from typing import Callable, Any, Dict, Tuple
+
+# Default TTL: 60 minutes (3600 seconds), configurable via environment variable
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
 
 
 class TTLCache:
@@ -87,12 +91,12 @@ class TTLCache:
         return len(expired_keys)
 
 
-def cached_with_ttl(ttl: int = 900):
+def cached_with_ttl(ttl: int = None):
     """
     Decorator that caches function results with time-based expiration.
 
     Args:
-        ttl: Time-to-live in seconds (default: 900 = 15 minutes)
+        ttl: Time-to-live in seconds (default: 3600 = 60 minutes, configurable via CACHE_TTL_SECONDS env var)
 
     Usage:
         @cached_with_ttl(ttl=900)
@@ -104,6 +108,8 @@ def cached_with_ttl(ttl: int = 900):
     Functions with complex arguments (objects, etc.) may not cache correctly.
     Best used with simple arguments (strings, numbers, tuples).
     """
+    if ttl is None:
+        ttl = CACHE_TTL_SECONDS
     cache = TTLCache()
 
     def decorator(func: Callable) -> Callable:
