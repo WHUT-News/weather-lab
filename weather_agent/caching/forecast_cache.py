@@ -8,7 +8,7 @@ Cache Logic:
 - Scans OUTPUT_DIR/{city}/ for forecast_text_*.txt and forecast_audio_*.wav files
 - Parses timestamps from filenames (format: forecast_text_YYYYMMDD_HHMMSS.txt)
 - Returns most recent pair if both text and audio files exist within TTL
-- TTL: 30 minutes (1800 seconds)
+- TTL: Configurable via CACHE_TTL_SECONDS env var (default: 3600 seconds / 60 minutes)
 
 Benefits:
 - No in-memory state to manage
@@ -25,8 +25,8 @@ from typing import Dict, Any, Optional, Tuple
 from google.adk.tools import ToolContext
 
 
-# Cache TTL: 30 minutes (1800 seconds)
-CACHE_TTL = 1800
+# Cache TTL: configurable via environment variable (default: 3600 seconds / 60 minutes)
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
 
 # Get output directory from environment
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
@@ -131,7 +131,7 @@ def get_forecast_from_cache(tool_context: ToolContext, city: str) -> Dict[str, A
     text_age = None
     for text_file in sorted(text_files, reverse=True):  # Most recent first
         age = _get_file_age_seconds(text_file)
-        if age is not None and age < CACHE_TTL:
+        if age is not None and age < CACHE_TTL_SECONDS:
             valid_text_file = text_file
             text_age = age
             break
@@ -152,7 +152,7 @@ def get_forecast_from_cache(tool_context: ToolContext, city: str) -> Dict[str, A
     valid_audio_file = None
     for audio_file in audio_files:
         audio_age = _get_file_age_seconds(audio_file)
-        if audio_age is not None and audio_age < CACHE_TTL:
+        if audio_age is not None and audio_age < CACHE_TTL_SECONDS:
             # Check if audio timestamp matches text timestamp (within 1 minute)
             audio_filename = os.path.basename(audio_file)
             audio_timestamp = _parse_timestamp_from_filename(audio_filename)
@@ -220,7 +220,7 @@ def cache_forecast(
         'audio_file': audio_file_path,
         'text_exists': str(text_exists),
         'audio_exists': str(audio_exists),
-        'ttl_readable': '30 minutes'
+        'ttl_readable': f'{CACHE_TTL_SECONDS // 60} minutes'
     }
 
 
@@ -239,8 +239,8 @@ def get_cache_stats(tool_context: ToolContext) -> Dict[str, Any]:
             'total_cities': 0,
             'cities_with_valid_cache': 0,
             'cached_cities': [],
-            'ttl_seconds': CACHE_TTL,
-            'ttl_readable': '30 minutes'
+            'ttl_seconds': CACHE_TTL_SECONDS,
+            'ttl_readable': f'{CACHE_TTL_SECONDS // 60} minutes'
         }
 
     # Scan all city directories
@@ -259,8 +259,8 @@ def get_cache_stats(tool_context: ToolContext) -> Dict[str, Any]:
         'total_cities': len(city_dirs),
         'cities_with_valid_cache': len(cities_with_valid_cache),
         'cached_cities': cities_with_valid_cache,
-        'ttl_seconds': CACHE_TTL,
-        'ttl_readable': '30 minutes'
+        'ttl_seconds': CACHE_TTL_SECONDS,
+        'ttl_readable': f'{CACHE_TTL_SECONDS // 60} minutes'
     }
 
 
@@ -298,7 +298,7 @@ def cleanup_expired(tool_context: ToolContext) -> Dict[str, Any]:
 
         for file in all_files:
             age = _get_file_age_seconds(file)
-            if age is not None and age >= CACHE_TTL:
+            if age is not None and age >= CACHE_TTL_SECONDS:
                 os.remove(file)
                 expired_removed += 1
             else:

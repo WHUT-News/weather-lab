@@ -27,6 +27,9 @@ from .caching.forecast_file_cleanup import cleanup_old_forecast_files_async
 # Example: http://localhost:8080 or https://forecast-mcp-server-xxxxx.run.app
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080")
 
+# Cache TTL in seconds (derived from CACHE_TTL_SECONDS, default 3600 seconds / 60 minutes)
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+
 
 async def _call_mcp_tool_remote(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -112,7 +115,7 @@ async def upload_forecast_to_storage(
     forecast_text = callback_context.state["FORECAST_TEXT"]
     audio_file_path = callback_context.state["FORECAST_AUDIO"]
     forecast_at = callback_context.state["FORECAST_TIMESTAMP"]
-    ttl_minutes = 30  # Default TTL in minutes
+    ttl_minutes = CACHE_TTL_SECONDS // 60  # Convert seconds to minutes
 
     # Read audio file and encode as base64 (MCP server may be remote and can't access local files)
     try:

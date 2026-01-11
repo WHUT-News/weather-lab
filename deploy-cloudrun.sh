@@ -39,6 +39,7 @@ echo "Max Instances: ${MAX_INSTANCES}"
 echo "Min Instances: ${MIN_INSTANCES}"
 echo "Timeout: ${TIMEOUT}s"
 echo "MCP Server URL: ${MCP_SERVER_URL}"
+echo "Cache TTL: ${CACHE_TTL_SECONDS:-3600}s"
 echo "================================================"
 
 # Deploy to Cloud Run
@@ -53,7 +54,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances="${MAX_INSTANCES}" \
   --min-instances="${MIN_INSTANCES}" \
   --timeout="${TIMEOUT}" \
-  --set-env-vars="MCP_SERVER_URL=${MCP_SERVER_URL}" \
+  --set-env-vars="MCP_SERVER_URL=${MCP_SERVER_URL},CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-3600}" \
   --allow-unauthenticated
 
 echo "================================================"
