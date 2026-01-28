@@ -17,10 +17,13 @@ MIN_INSTANCES="${MIN_INSTANCES:-0}"
 TIMEOUT="${TIMEOUT:-300}"
 
 # Required environment variables
-if [ -z "${MCP_SERVER_URL}" ]; then
-  echo "Error: MCP_SERVER_URL environment variable is required"
+if [ -z "${SUPABASE_URL}" ]; then
+  echo "Error: SUPABASE_URL environment variable is required"
   exit 1
 fi
+
+# Secret Manager configuration
+SUPABASE_SERVICE_SECRET_KEY="weather_report_supabase_service_secret_key:latest"
 
 # Construct full image path
 IMAGE_PATH="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:${TAG}"
@@ -38,9 +41,17 @@ echo "CPU: ${CPU}"
 echo "Max Instances: ${MAX_INSTANCES}"
 echo "Min Instances: ${MIN_INSTANCES}"
 echo "Timeout: ${TIMEOUT}s"
-echo "MCP Server URL: ${MCP_SERVER_URL}"
-echo "Cache TTL: ${CACHE_TTL_SECONDS:-3600}s"
+echo "Supabase URL: ${SUPABASE_URL}"
+echo "Cache TTL: ${CACHE_TTL:-1}h"
 echo "================================================"
+
+# Build environment variables string
+ENV_VARS="SUPABASE_URL=${SUPABASE_URL}"
+if [ -n "${CACHE_TTL}" ]; then
+  ENV_VARS="${ENV_VARS},CACHE_TTL=${CACHE_TTL}"
+fi
+
+SECRET_VARS="SUPABASE_SERVICE_SECRET_KEY=${SUPABASE_SERVICE_SECRET_KEY}"
 
 # Deploy to Cloud Run
 gcloud run deploy "${SERVICE_NAME}" \
@@ -54,7 +65,8 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances="${MAX_INSTANCES}" \
   --min-instances="${MIN_INSTANCES}" \
   --timeout="${TIMEOUT}" \
-  --set-env-vars="MCP_SERVER_URL=${MCP_SERVER_URL},CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-3600}" \
+  --set-env-vars="${ENV_VARS}" \
+  --set-secrets="${SECRET_VARS}" \
   --allow-unauthenticated
 
 echo "================================================"

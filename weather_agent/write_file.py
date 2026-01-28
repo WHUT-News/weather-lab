@@ -34,7 +34,7 @@ def write_picture_file(tool_context: ToolContext, city_name: str, image_data, fo
     file_name = f"forecast_picture_{forecast_timestamp}.{format}"
 
     # Save to local OUTPUT_DIR as temporary storage
-    # File will be uploaded to Cloud SQL by the weather agent
+    # File will be uploaded to Supabase by the weather agent
     directory = os.path.join(OUTPUT_DIR, city_name)
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -75,7 +75,7 @@ def write_audio_file(tool_context: ToolContext, city_name: str, audio_data) -> d
     file_name = f"forecast_audio_{forecast_timestamp}.wav"
 
     # Save to local OUTPUT_DIR as temporary storage
-    # File will be uploaded to Cloud SQL by the weather agent
+    # File will be uploaded to Supabase by the weather agent
     directory = os.path.join(OUTPUT_DIR, city_name)
     if not os.path.exists(directory):
         os.makedirs(directory)
