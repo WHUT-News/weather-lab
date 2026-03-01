@@ -1,229 +1,313 @@
 """
-MCP Client Wrapper for Forecast Storage.
+Direct Supabase Storage Client for Weather Forecasts.
 
-Provides simple functions for the weather agent to interact with the
-forecast storage MCP server without dealing with MCP protocol details.
+Uploads forecast content directly to Supabase without routing binary data
+through an MCP server. Audio and images are stored in Supabase Storage
+buckets, and metadata is stored in the Supabase PostgreSQL database.
+
+Schema: see schema.sql for the weather_forecasts table definition.
 """
 
 import os
-import json
+import uuid
+import logging
 import asyncio
-from typing import Dict, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any
 
 from google.adk.tools import ToolContext
 from google.adk.agents.callback_context import CallbackContext
-
-import logging
-import google.cloud.logging
+from supabase import create_client, Client
+from dotenv import load_dotenv
 import httpx
-from mcp.client.session import ClientSession
-from mcp.client.sse import sse_client
 
-from .write_file import write_audio_file
+from .write_file import write_audio_file, write_picture_file
 from .caching.forecast_file_cleanup import cleanup_old_forecast_files_async
 
-# MCP Server URL - base URL for MCP server
-# Set to localhost for local development or Cloud Run URL for production
-# Example: http://localhost:8080 or https://forecast-mcp-server-xxxxx.run.app
-MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080")
+load_dotenv()
 
-# Cache TTL in seconds (derived from CACHE_TTL_SECONDS, default 3600 seconds / 60 minutes)
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+logger = logging.getLogger(__name__)
+
+# Supabase configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SERVICE_SECRET_KEY")
+
+# Storage bucket names
+AUDIO_BUCKET = "weather-audio"
+IMAGE_BUCKET = "weather-images"
+
+# Table name
+FORECASTS_TABLE = "weather_forecasts"
+
+# Default encoding
+TEXT_ENCODING = "utf-8"
+
+# Cache TTL in hours (default 1 hour)
+CACHE_TTL = int(os.getenv("CACHE_TTL", "1"))
 
 
-async def _call_mcp_tool_remote(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Call MCP server via SSE transport using official MCP client.
-
-    Args:
-        tool_name: Name of the MCP tool to call
-        arguments: Tool arguments as dictionary
-
-    Returns:
-        Tool result as dictionary
-    """
+def _get_supabase_client() -> Optional[Client]:
+    """Get Supabase client instance."""
+    if not SUPABASE_URL or not SUPABASE_SECRET_KEY:
+        return None
     try:
-        # Connect using SSE transport - MCP client expects the /sse endpoint
-        base_url = MCP_SERVER_URL.rstrip('/')
-        sse_url = f"{base_url}/sse"
-
-        async with sse_client(sse_url) as (read, write):
-            async with ClientSession(read, write) as session:
-                # Initialize session
-                await session.initialize()
-
-                # Call the tool
-                result = await session.call_tool(tool_name, arguments)
-
-                # Parse result - MCP returns list of TextContent objects
-                if result and len(result.content) > 0:
-                    # Extract text from first content item
-                    text_content = result.content[0].text
-                    if not text_content or text_content.strip() == "":
-                        logging.error(f"Empty text content from MCP server for tool: {tool_name}")
-                        return {
-                            "status": "error",
-                            "message": "Empty text content from MCP server"
-                        }
-                    try:
-                        return json.loads(text_content)
-                    except json.JSONDecodeError as e:
-                        logging.error(f"Failed to parse MCP response as JSON: {text_content[:200]}")
-                        return {
-                            "status": "error",
-                            "message": f"Invalid JSON response from server: {str(e)}"
-                        }
-
-                return {
-                    "status": "error",
-                    "message": "Empty response from MCP server"
-                }
-
-    except httpx.ConnectError as e:
-        return {
-            "status": "error",
-            "message": f"Cannot connect to MCP server at {MCP_SERVER_URL}. Make sure the server is running."
-        }
+        return create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
     except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        logging.error(f"MCP call error: {error_details}")
-        return {
-            "status": "error",
-            "message": f"MCP call failed: {str(e)}",
-            "details": error_details
-        }
+        logger.error(f"Failed to create Supabase client: {e}")
+        return None
+
+
+def _read_file_bytes(file_path: str) -> Optional[bytes]:
+    """Read a file and return its contents as bytes."""
+    if not file_path or not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, "rb") as f:
+            return f.read()
+    except Exception as e:
+        logger.warning(f"Failed to read file {file_path}: {e}")
+        return None
+
+
+def _get_content_type(file_path: str) -> str:
+    """Get MIME content type from file extension."""
+    if not file_path:
+        return "application/octet-stream"
+
+    ext = os.path.splitext(file_path)[1].lower()
+    content_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }
+    return content_types.get(ext, "application/octet-stream")
+
+
+def _get_file_format(file_path: str) -> Optional[str]:
+    """Get file format from extension (without dot)."""
+    if not file_path:
+        return None
+    ext = os.path.splitext(file_path)[1].lower().lstrip(".")
+    return ext if ext else None
+
+
+def _upload_to_storage(
+    client: Client,
+    bucket: str,
+    file_path: str,
+    storage_path: str,
+) -> tuple[Optional[str], Optional[int]]:
+    """
+    Upload a file to Supabase Storage.
+
+    Returns tuple of (public_url, file_size_bytes) if successful, (None, None) otherwise.
+    """
+    file_bytes = _read_file_bytes(file_path)
+    if not file_bytes:
+        return None, None
+
+    try:
+        content_type = _get_content_type(file_path)
+
+        # Upload to storage
+        client.storage.from_(bucket).upload(
+            path=storage_path,
+            file=file_bytes,
+            file_options={"content-type": content_type}
+        )
+
+        # Get public URL
+        public_url = client.storage.from_(bucket).get_public_url(storage_path)
+        file_size = len(file_bytes)
+        logger.info(f"Uploaded {file_path} to {bucket}/{storage_path} ({file_size} bytes)")
+        return public_url, file_size
+
+    except Exception as e:
+        logger.error(f"Failed to upload to storage: {e}")
+        return None, None
+
+
+def _encode_text_to_bytes(text: str, encoding: str = TEXT_ENCODING) -> bytes:
+    """Encode text to bytes using specified encoding."""
+    return text.encode(encoding)
+
+
+# Thread pool for async file deletion
+_deletion_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="file_cleanup")
+
+
+def _delete_file(file_path: str) -> None:
+    """Delete a single file. Logs errors but does not raise."""
+    try:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info(f"Deleted local file: {file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to delete local file {file_path}: {e}")
+
+
+def _delete_local_files_async(*file_paths: str) -> None:
+    """
+    Delete local files asynchronously with no delay.
+
+    Submits deletion tasks to a thread pool executor and returns immediately.
+    Errors are logged but do not affect the caller.
+    """
+    for file_path in file_paths:
+        if file_path:
+            _deletion_executor.submit(_delete_file, file_path)
 
 
 async def upload_forecast_to_storage(
     callback_context: CallbackContext
 ) -> None:
     """
-    Upload complete forecast (text + audio) to Cloud SQL storage.
+    Upload complete forecast (text + audio + picture) directly to Supabase.
 
-    This is an ADK tool that wraps the MCP upload_forecast tool.
+    Reads content from agent session state, uploads files to Supabase Storage,
+    and stores metadata in the database.
 
     Args:
         callback_context: Agent callback context
-
-    Returns:
-        None
     """
-    import base64
+    # Get Supabase client
+    client = _get_supabase_client()
+    if not client:
+        logger.error("Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_SECRET_KEY.")
+        return
 
     city = callback_context.state["CITY"]
     forecast_text = callback_context.state["FORECAST_TEXT"]
-    audio_file_path = callback_context.state["FORECAST_AUDIO"]
-    forecast_at = callback_context.state["FORECAST_TIMESTAMP"]
-    ttl_minutes = CACHE_TTL_SECONDS // 60  # Convert seconds to minutes
+    audio_file_path = callback_context.state.get("FORECAST_AUDIO")
+    picture_file_path = callback_context.state.get("FORECAST_PICTURE")
+    forecast_at = callback_context.state.get("FORECAST_TIMESTAMP")
 
-    # Read audio file and encode as base64 (MCP server may be remote and can't access local files)
+    # Parse timestamp
+    if forecast_at:
+        try:
+            dt = datetime.strptime(forecast_at, "%Y-%m-%d_%H%M%S")
+            dt = dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            dt = datetime.now(timezone.utc)
+    else:
+        dt = datetime.now(timezone.utc)
+
+    published_at = dt.isoformat()
+    expires_at = (dt + timedelta(hours=CACHE_TTL)).isoformat()
+
+    # Generate unique ID for this forecast
+    forecast_id = str(uuid.uuid4())
+
+    # Encode text content to bytes (schema uses BYTEA for forecast_text)
+    content_bytes = _encode_text_to_bytes(forecast_text)
+    text_size_bytes = len(content_bytes)
+
+    # Initialize upload results
+    audio_url = None
+    audio_size_bytes = None
+    audio_format = None
+    image_url = None
+    image_size_bytes = None
+    image_format = None
+
+    # Upload audio and image files in parallel
+    upload_futures = {}
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="media_upload") as executor:
+        # Submit audio upload task
+        if audio_file_path and os.path.exists(audio_file_path):
+            audio_format = _get_file_format(audio_file_path)
+            ext = os.path.splitext(audio_file_path)[1] or ".wav"
+            storage_path = f"{forecast_id}/audio{ext}"
+            future = executor.submit(_upload_to_storage, client, AUDIO_BUCKET, audio_file_path, storage_path)
+            upload_futures[future] = "audio"
+
+        # Submit image upload task
+        if picture_file_path and os.path.exists(picture_file_path):
+            image_format = _get_file_format(picture_file_path)
+            ext = os.path.splitext(picture_file_path)[1] or ".png"
+            storage_path = f"{forecast_id}/image{ext}"
+            future = executor.submit(_upload_to_storage, client, IMAGE_BUCKET, picture_file_path, storage_path)
+            upload_futures[future] = "image"
+
+        # Collect results as uploads complete
+        for future in as_completed(upload_futures):
+            upload_type = upload_futures[future]
+            try:
+                url, size_bytes = future.result()
+                if upload_type == "audio":
+                    audio_url, audio_size_bytes = url, size_bytes
+                else:
+                    image_url, image_size_bytes = url, size_bytes
+            except Exception as e:
+                logger.error(f"Failed to upload {upload_type}: {e}")
+
+    # Build metadata
+    metadata = {
+        "city": city,
+        "original_timestamp": forecast_at,
+    }
+    if audio_file_path:
+        metadata["local_audio_path"] = audio_file_path
+    if picture_file_path:
+        metadata["local_image_path"] = picture_file_path
+
+    # Insert forecast record into database (matching schema.sql)
     try:
-        with open(audio_file_path, 'rb') as f:
-            audio_bytes = f.read()
-            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        record = {
+            "id": forecast_id,
+            "city": city,
+            "forecast_at": published_at,
+            "expires_at": expires_at,
+            # Text content as BYTEA - use hex encoding for Supabase
+            "forecast_text": f"\\x{content_bytes.hex()}",
+            "text_size_bytes": text_size_bytes,
+            "text_encoding": TEXT_ENCODING,
+            "text_language": "en",
+            "text_locale": "en-US",
+            # Audio fields
+            "audio_url": audio_url,
+            "audio_size_bytes": audio_size_bytes,
+            "audio_format": audio_format,
+            # Image fields
+            "image_url": image_url,
+            "image_size_bytes": image_size_bytes,
+            "image_format": image_format,
+            # Metadata
+            "metadata": metadata,
+        }
+
+        result = client.table(FORECASTS_TABLE).insert(record).execute()
+
+        if not result.data:
+            logger.error("Failed to insert forecast record into database.")
+            return
+
+        logger.info(f"Uploaded forecast {forecast_id} for {city}")
+
     except Exception as e:
-        logging.error(f"Failed to read audio file {audio_file_path}: {e}")
+        logger.error(f"Database insert failed: {e}")
         return
 
-    # Read picture file if available and encode as base64
-    picture_file_path = callback_context.state.get("FORECAST_PICTURE")
-    picture_base64 = None
-    picture_format = "png"
+    # Store results in session state
+    callback_context.state["CLOUD_FORECAST_ID"] = forecast_id
+    if audio_url:
+        callback_context.state["CLOUD_AUDIO_URL"] = audio_url
+    if image_url:
+        callback_context.state["CLOUD_IMAGE_URL"] = image_url
 
-    if picture_file_path:
-        try:
-            with open(picture_file_path, 'rb') as f:
-                picture_bytes = f.read()
-                picture_base64 = base64.b64encode(picture_bytes).decode('utf-8')
+    # Delete local files asynchronously after successful upload
+    text_file_path = callback_context.state.get("FORECAST_TEXT_FILE")
+    _delete_local_files_async(audio_file_path, picture_file_path, text_file_path)
 
-            # Extract format from file extension
-            _, ext = os.path.splitext(picture_file_path)
-            picture_format = ext.lstrip('.')  # Remove leading dot
-        except Exception as e:
-            logging.error(f"Failed to read picture file {picture_file_path}: {e}")
-            # Continue without picture - it's optional
-
-    result = await _call_mcp_tool_remote("upload_forecast", {
-        "city": city,
-        "forecast_text": forecast_text,
-        "audio_data": audio_base64,
-        "picture_data": picture_base64,
-        "picture_format": picture_format,
-        "forecast_at": forecast_at,
-        "ttl_minutes": ttl_minutes,
-        "language": "en",  # Could be made configurable
-        "locale": "en-US"
-    })
-    
-    # callback doesn't support any return. Use logging instead.
-    logging_client = google.cloud.logging.Client()
-    logging_client.setup_logging()
-
-    if result.get("status") == "success":
-        logging.info({
-            "status": "success",
-            "message": f"Forecast uploaded to Cloud SQL storage",
-            "forecast_id": result.get("forecast_id", ""),
-            "storage_info": json.dumps(result.get("sizes", {}))
-        })
-        
-    else:
-        logging.error({
-            "status": "error",
-            "message": f"Upload failed: {result.get('message', 'Unknown error')}"
-        })
-        
-    # Fire-and-forget async cleanup (no await, no return value needed)
-    # This runs in the background and doesn't block the upload response
+    # Fire-and-forget async cleanup of old local files
     asyncio.create_task(cleanup_old_forecast_files_async())
-
-
-async def download_and_write_picture(
-    tool_context: ToolContext,
-    city: str,
-    picture_url: str
-) -> str | None:
-    """
-    Download picture from GCS URL and write to local file.
-
-    Args:
-        tool_context: ADK tool context
-        city: City name
-        picture_url: GCS URL (gs://bucket/path/file.png)
-
-    Returns:
-        Local file path or None if download failed
-    """
-    try:
-        from google.cloud import storage
-
-        # Parse gs://bucket/path/file.png
-        if not picture_url.startswith("gs://"):
-            logging.error(f"Invalid GCS URL format: {picture_url}")
-            return None
-
-        parts = picture_url[5:].split("/", 1)
-        bucket_name = parts[0]
-        blob_name = parts[1]
-
-        # Download from GCS
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(blob_name)
-        picture_bytes = blob.download_as_bytes()
-
-        # Write locally using existing write_picture_file
-        _, ext = os.path.splitext(picture_url)
-        format = ext.lstrip('.') or 'png'
-
-        from .write_file import write_picture_file
-        result = write_picture_file(tool_context, city, picture_bytes, format)
-        return result.get("file_path")
-
-    except Exception as e:
-        logging.error(f"Failed to download picture from {picture_url}: {e}")
-        return None
 
 
 async def get_cached_forecast_from_storage(
@@ -231,9 +315,10 @@ async def get_cached_forecast_from_storage(
     city: str
 ) -> Dict[str, Any]:
     """
-    Retrieve cached forecast from Cloud SQL storage if available.
+    Retrieve cached forecast from Supabase if available.
 
-    This is an ADK tool that wraps the MCP get_cached_forecast tool.
+    Queries the weather_forecasts table for a non-expired forecast for the given city.
+    If found, downloads audio and picture files from Supabase Storage.
 
     Args:
         tool_context: ADK tool context
@@ -242,37 +327,88 @@ async def get_cached_forecast_from_storage(
     Returns:
         Dictionary with cache status and forecast data if cached
     """
-    result = await _call_mcp_tool_remote("get_cached_forecast", {
-        "city": city
-    })
-    
-    if result.get("cached"):
-        # Cache hit - return forecast data
-        # store audio_data into a file using write_audio_file tool
-        audio_file = write_audio_file(tool_context, city, result.get("audio_data", ""))
+    client = _get_supabase_client()
+    if not client:
+        return {
+            "cached": False,
+            "forecast_text": None,
+            "audio_filepath": None,
+            "picture_filepath": None,
+        }
 
-        # Download picture from GCS if available
-        picture_url = result.get("picture_url")
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Query for non-expired forecast for this city
+        result = client.table(FORECASTS_TABLE) \
+            .select("*") \
+            .eq("city", city) \
+            .gt("expires_at", now) \
+            .order("forecast_at", desc=True) \
+            .limit(1) \
+            .execute()
+
+        if not result.data:
+            return {
+                "cached": False,
+                "forecast_text": None,
+                "audio_filepath": None,
+                "picture_filepath": None,
+            }
+
+        record = result.data[0]
+
+        # Decode forecast text from BYTEA hex
+        forecast_text = None
+        raw_text = record.get("forecast_text")
+        if raw_text:
+            try:
+                encoding = record.get("text_encoding", "utf-8")
+                if isinstance(raw_text, str) and raw_text.startswith("\\x"):
+                    forecast_text = bytes.fromhex(raw_text[2:]).decode(encoding)
+                else:
+                    forecast_text = raw_text
+            except Exception as e:
+                logger.error(f"Failed to decode forecast text: {e}")
+
+        # Calculate age
+        forecast_at = record.get("forecast_at", "")
+        age_seconds = 0
+        if forecast_at:
+            try:
+                ft = datetime.fromisoformat(forecast_at)
+                age_seconds = int((datetime.now(timezone.utc) - ft).total_seconds())
+            except Exception:
+                pass
+
+        # Download audio file from Supabase Storage if available
+        audio_filepath = None
+        audio_url = record.get("audio_url")
+        if audio_url:
+            audio_filepath = await _download_file_from_url(
+                tool_context, city, audio_url, "audio"
+            )
+
+        # Download picture file from Supabase Storage if available
         picture_filepath = None
-
-        if picture_url:
-            picture_filepath = await download_and_write_picture(
-                tool_context,
-                city,
-                picture_url
+        image_url = record.get("image_url")
+        if image_url:
+            picture_filepath = await _download_file_from_url(
+                tool_context, city, image_url, "image"
             )
 
         return {
             "cached": True,
-            "forecast_text": result.get("forecast_text", ""),
-            "audio_filepath": audio_file.get("file_path", None),
+            "forecast_text": forecast_text,
+            "audio_filepath": audio_filepath,
             "picture_filepath": picture_filepath,
-            "age_seconds": result.get("age_seconds", 0),
-            "forecast_at": result.get("forecast_at", ""),
-            "expires_at": result.get("expires_at", ""),
+            "age_seconds": age_seconds,
+            "forecast_at": forecast_at,
+            "expires_at": record.get("expires_at", ""),
         }
-    else:
-        # Cache miss
+
+    except Exception as e:
+        logger.error(f"Failed to query cached forecast: {e}")
         return {
             "cached": False,
             "forecast_text": None,
@@ -281,62 +417,43 @@ async def get_cached_forecast_from_storage(
         }
 
 
-async def get_storage_stats_from_mcp(
-    tool_context: ToolContext
-) -> Dict[str, Any]:
+async def _download_file_from_url(
+    tool_context: ToolContext,
+    city: str,
+    url: str,
+    file_type: str
+) -> Optional[str]:
     """
-    Get storage statistics from Cloud SQL.
-
-    This is an ADK tool that wraps the MCP get_storage_stats tool.
+    Download a file from a Supabase Storage URL and save locally.
 
     Args:
         tool_context: ADK tool context
+        city: City name (for directory structure)
+        url: Public URL to download from
+        file_type: "audio" or "image"
 
     Returns:
-        Dictionary with storage statistics
+        Local file path or None if download failed
     """
-    result = await _call_mcp_tool_remote("get_storage_stats", {})
-    
-    if result.get("status") == "success":
-        return {
-            "status": "success",
-            "total_forecasts": result.get("total_forecasts", 0),
-            "total_text_bytes": result.get("total_text_bytes", 0),
-            "total_audio_bytes": result.get("total_audio_bytes", 0),
-            "city_breakdown": json.dumps(result.get("city_breakdown", []))
-        }
-    else:
-        return {
-            "status": "error",
-            "message": result.get("message", "Failed to get stats")
-        }
+    try:
+        async with httpx.AsyncClient() as http_client:
+            response = await http_client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            file_bytes = response.content
 
+        if file_type == "audio":
+            # write_audio_file expects base64 string or raw bytes
+            # Pass raw WAV bytes directly - the file from storage is already WAV
+            result = write_audio_file(tool_context, city, file_bytes)
+            return result.get("file_path")
+        else:
+            # write_picture_file expects image_data as bytes
+            # Detect format from URL
+            ext = os.path.splitext(url.split("?")[0])[1].lstrip(".")
+            fmt = ext if ext else "png"
+            result = write_picture_file(tool_context, city, file_bytes, fmt)
+            return result.get("file_path")
 
-async def test_storage_connection(
-    tool_context: ToolContext
-) -> Dict[str, str]:
-    """
-    Test connection to Cloud SQL storage.
-
-    This is an ADK tool that wraps the MCP test_connection tool.
-
-    Args:
-        tool_context: ADK tool context
-
-    Returns:
-        Dictionary with connection status
-    """
-    result = await _call_mcp_tool_remote("test_connection", {})
-    
-    if result.get("status") == "success":
-        return {
-            "status": "connected",
-            "message": f"Connected to {result.get('instance', 'Cloud SQL')}",
-            "database": result.get("database", ""),
-            "table_exists": str(result.get("forecasts_table_exists", False))
-        }
-    else:
-        return {
-            "status": "error",
-            "message": f"Connection failed: {result.get('error', 'Unknown error')}"
-        }
+    except Exception as e:
+        logger.error(f"Failed to download {file_type} from {url}: {e}")
+        return None

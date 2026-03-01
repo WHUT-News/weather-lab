@@ -15,7 +15,7 @@ def generate_audio(tool_context: ToolContext, city_name: str, tone: str="cheerfu
     """Generates an audio file from the given text content using text-to-speech synthesis.
     
     The audio file is saved locally and the file path is stored in session state
-    for upload to Cloud SQL storage by the weather agent.
+    for upload to Supabase storage by the weather agent.
     
         Args:
             tool_context (ToolContext): The tool context containing session state

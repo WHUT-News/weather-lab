@@ -63,7 +63,7 @@ root_agent = Agent(
       * the city in the session with the key 'CITY'
       * the type of weather information in the session with the key 'WEATHER_TYPE'. If you are unsure, default to "current weather condition".
       * the current date and time in the session with the key 'FORECAST_TIMESTAMP'
-    3. BEFORE delegating to sub-agents, use get_cached_forecast_from_storage with the city name to check if a recent forecast exists in Cloud SQL.
+    3. BEFORE delegating to sub-agents, use get_cached_forecast_from_storage with the city name to check if a recent forecast exists.
         - If cached is True:
             * Store the cache status in session with key 'FORECAST_CACHED' as True
             * Store the forecast_at timestamp in session with key 'FORECAST_TIMESTAMP'
@@ -75,7 +75,7 @@ root_agent = Agent(
             * Inform the user the weather info (mention cache age in minutes, if useful)
         - If cached is False:
             * Delegate the task of producing the weather forecast to the weather_studio_team.
-            * After the sub-agents complete, use upload_forecast_to_storage to store the results in Cloud SQL.
+            * After the sub-agents complete, use upload_forecast_to_storage to store the results.
     """,
     after_agent_callback=conditional_upload_forecast,
     sub_agents=[weather_studio_team],

@@ -16,7 +16,7 @@ def generate_picture(tool_context: ToolContext, city_name: str, theme: str="city
     """Generates a picture from the given text content using image generation.
 
     The picture file is saved locally and the file path is stored in session state
-    for upload to Cloud SQL storage by the weather agent.
+    for upload to Supabase storage by the weather agent.
 
         Args:
             tool_context (ToolContext): The tool context containing session state

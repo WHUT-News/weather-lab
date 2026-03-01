@@ -8,7 +8,7 @@ Cache Logic:
 - Scans OUTPUT_DIR/{city}/ for forecast_text_*.txt and forecast_audio_*.wav files
 - Parses timestamps from filenames (format: forecast_text_YYYYMMDD_HHMMSS.txt)
 - Returns most recent pair if both text and audio files exist within TTL
-- TTL: Configurable via CACHE_TTL_SECONDS env var (default: 3600 seconds / 60 minutes)
+- TTL: Configurable via CACHE_TTL env var in hours (default: 1 hour)
 
 Benefits:
 - No in-memory state to manage
@@ -25,8 +25,8 @@ from typing import Dict, Any, Optional, Tuple
 from google.adk.tools import ToolContext
 
 
-# Cache TTL: configurable via environment variable (default: 3600 seconds / 60 minutes)
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+# Cache TTL: configurable via environment variable in hours (default: 1 hour)
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL", "1")) * 3600
 
 # Get output directory from environment
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")

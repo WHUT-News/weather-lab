@@ -11,8 +11,8 @@ import time
 from functools import wraps
 from typing import Callable, Any, Dict, Tuple
 
-# Default TTL: 60 minutes (3600 seconds), configurable via environment variable
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+# Default TTL: 1 hour, configurable via environment variable in hours
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL", "1")) * 3600
 
 
 class TTLCache:
@@ -96,7 +96,7 @@ def cached_with_ttl(ttl: int = None):
     Decorator that caches function results with time-based expiration.
 
     Args:
-        ttl: Time-to-live in seconds (default: 3600 = 60 minutes, configurable via CACHE_TTL_SECONDS env var)
+        ttl: Time-to-live in seconds (default: 1 hour, configurable via CACHE_TTL env var in hours)
 
     Usage:
         @cached_with_ttl(ttl=900)
