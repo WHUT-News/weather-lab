@@ -23,7 +23,7 @@ forecast_writer_agent = Agent(
         - Start with a greeting and mention the city name
         - Describe the current weather conditions (including temperature, humidity, wind speed, etc.)
         - Include practical advice (e.g., "bring an umbrella", "dress warmly")
-        - end with 'Brought to you by W-H-U-T Weather Services.'
+        - end with 'Brought to you by WHUT Weather Services.'
         - Suitable for text-to-speech conversion
 
         Steps to follow:
